@@ -1,4 +1,4 @@
 [build]
 executable_name = "din"
 # dumb_project_dir is the path that the project is copied to
-command = 'python "$dumb_project_dir/dumb_installer.py"'
+command = "python $dumb_project_dir/dumb_installer.py"

@@ -68,7 +68,7 @@ def write_wrapper(executable_name: str, command: str, project_dir: Path, bin_dir
 
     wrapper_path = bin_dir / executable_name
 
-    script = f'{SHABANG}\ndumb_project_dir={project_dir}\n{command} $@'
+    script = f'{SHABANG}\ndumb_project_dir={project_dir}\n{command} "$@"'
 
     wrapper_path.write_text(script)
     wrapper_path.chmod(
@@ -128,7 +128,8 @@ def main() -> None:
     if "exclude" in build.keys():
         exclude = build["exclude"]
     else:
-        exclude = ["__pycache__", "*.pyc", ".git", "dumb_build.toml"]
+        exclude = ["__pycache__", "*.pyc", ".git",
+                   "dumb_build.toml", "LICENSE", "README.md"]
 
     DEFAULT_INSTALL_ROOT.mkdir(parents=True, exist_ok=True)
 
