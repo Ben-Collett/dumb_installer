@@ -72,9 +72,13 @@ def write_wrapper(executable_name: str, command: str, project_dir: Path, bin_dir
 
     wrapper_path.write_text(script)
     wrapper_path.chmod(
-        stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR |
-        stat.S_IRGRP | stat.S_IXGRP |
-        stat.S_IROTH | stat.S_IXOTH
+        stat.S_IRUSR
+        | stat.S_IWUSR
+        | stat.S_IXUSR
+        | stat.S_IRGRP
+        | stat.S_IXGRP
+        | stat.S_IROTH
+        | stat.S_IXOTH
     )
 
 
@@ -92,13 +96,18 @@ def is_empty_dir(p: Path):
 def main() -> None:
 
     parser = argparse.ArgumentParser(
-        prog="dumb installer", description="easy way to install programs system wide on linux, from scripts. Without having to deal with package managers")
+        prog="dumb installer",
+        description="easy way to install programs system wide on linux, from scripts. Without having to deal with package managers",
+    )
 
     # TODO add support for these options:
     # parser.add_argument("-u", "--user_install", action='store_true')
     # parser.add_argument("-U", "--uninstall", action='store_true')
 
     parser.add_argument("-E", "--exe-uninstall", type=str)
+    parser.add_argument(
+        "-n", "--name", type=str, help="Override the executable name from config"
+    )
 
     require_root()
 
@@ -112,7 +121,7 @@ def main() -> None:
             print("deleting", bin_path)
             delete_from_path(bin_path)
         if dumb_path.exists():
-            print("deleting", bin_path)
+            print("deleting", dumb_path)
             delete_from_path(dumb_path)
 
         if is_empty_dir(DEFAULT_INSTALL_ROOT):
@@ -125,11 +134,19 @@ def main() -> None:
 
     executable_name = build["executable_name"]
     command = build["command"]
+    if args.name:
+        executable_name = args.name
     if "exclude" in build.keys():
         exclude = build["exclude"]
     else:
-        exclude = ["__pycache__", "*.pyc", ".git",
-                   "dumb_build.toml", "LICENSE", "README.md"]
+        exclude = [
+            "__pycache__",
+            "*.pyc",
+            ".git",
+            "dumb_build.toml",
+            "LICENSE",
+            "README.md",
+        ]
 
     DEFAULT_INSTALL_ROOT.mkdir(parents=True, exist_ok=True)
 
