@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import os
 import sys
 import shutil
@@ -7,13 +5,14 @@ import stat
 import tomllib
 from pathlib import Path
 import argparse
-
+from file_utils import directories_differ
 # TODO: allow user to override install locations, maybe  do a separate user_space vs system install
 # using ~/.local/bin and I don't kkow what for the opt mayble local state?
 DEFAULT_INSTALL_ROOT = Path("/opt/dumb_builds")
 DEFAULT_BIN_DIR = Path("/usr/local/bin")
 CONFIG_FILE = "dumb_build.toml"
 SHABANG = "#!/usr/bin/env sh"
+METADATA_FILE = ".dumb_install_metadata"
 
 
 def error(msg: str) -> None:
@@ -93,6 +92,70 @@ def is_empty_dir(p: Path):
     return p.exists() and p.is_dir() and not any(p.iterdir())
 
 
+def save_metadata(install_dir: Path, source_dir: Path) -> None:
+    metadata_path = install_dir / METADATA_FILE
+    metadata_path.write_text(str(source_dir))
+
+
+def load_metadata(install_dir: Path) -> Path | None:
+    metadata_path = install_dir / METADATA_FILE
+    if not metadata_path.exists():
+        return None
+    return Path(metadata_path.read_text())
+
+
+def update_executable(executable_name: str) -> None:
+    print(f"Updating {executable_name}...")
+    install_dir = DEFAULT_INSTALL_ROOT / executable_name
+    if not install_dir.exists():
+        print(f"Failed: couldn't find source directory at {install_dir}")
+        return
+
+    source_dir = load_metadata(install_dir)
+    if source_dir is None:
+        print("No source directory path")
+        return
+
+    if not source_dir.exists():
+        print(f"Failed: couldn't find source directory at {source_dir}")
+        return
+
+    if not (source_dir / CONFIG_FILE).exists():
+        print(f"Failed: couldn't find source directory at {source_dir}")
+        return
+
+    build = load_config(source_dir)
+
+    if "exclude" in build.keys():
+        exclude = build["exclude"]
+    else:
+        exclude = [
+            "__pycache__",
+            "*.pyc",
+            ".git",
+            "dumb_build.toml",
+            "LICENSE",
+            "README.md",
+        ]
+    exclude.append(METADATA_FILE)
+
+    if not directories_differ(install_dir, source_dir, exclude):
+        print("already up to date")
+        return
+    copy_project(source_dir, install_dir, exclude)
+    save_metadata(install_dir, source_dir)
+    print("updated")
+
+
+def update_all() -> None:
+    if not DEFAULT_INSTALL_ROOT.exists():
+        return
+
+    for entry in DEFAULT_INSTALL_ROOT.iterdir():
+        if entry.is_dir():
+            update_executable(entry.name)
+
+
 def main() -> None:
 
     parser = argparse.ArgumentParser(
@@ -107,6 +170,11 @@ def main() -> None:
     parser.add_argument("-E", "--exe-uninstall", type=str)
     parser.add_argument(
         "-n", "--name", type=str, help="Override the executable name from config"
+    )
+    parser.add_argument("--update", type=str,
+                        help="Update a specific executable")
+    parser.add_argument(
+        "--update-all", action="store_true", help="Update all installed executables"
     )
 
     require_root()
@@ -129,6 +197,15 @@ def main() -> None:
             print(f"no programs left in {DEFAULT_INSTALL_ROOT}, deleting")
 
         exit()
+
+    if args.update:
+        update_executable(args.update)
+        exit()
+
+    if args.update_all:
+        update_all()
+        exit()
+
     project_root = Path.cwd().resolve()
     build = load_config(project_root)
 
@@ -154,6 +231,7 @@ def main() -> None:
     install_dir = DEFAULT_INSTALL_ROOT / executable_name
 
     copy_project(project_root, install_dir, exclude)
+    save_metadata(install_dir, project_root)
     write_wrapper(executable_name, command, install_dir, bin_dir)
 
     print(f"Installed '{executable_name}' system-wide")
