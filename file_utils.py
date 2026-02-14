@@ -1,82 +1,18 @@
 from pathlib import Path
-import hashlib
 import shutil
 import os
 
 
-# NOTE: file_hash and comparedirectoires are unused code I should delete them in a future version
-def file_hash(path: Path, chunk_size: int = 8192) -> str:
-    hasher = hashlib.sha256()
-    with path.open("rb") as f:
-        while chunk := f.read(chunk_size):
-            hasher.update(chunk)
-    return hasher.hexdigest()
+def copy_project(src: Path, dest: Path, exclude) -> None:
+    if dest.exists():
+        shutil.rmtree(dest)
 
-
-def compare_directories(dir1: str, dir2: str, ignore_patterns=None):
-    """
-    Compare two directories recursively and return differences.
-
-    Parameters:
-        dir1, dir2: directories to compare
-        ignore_patterns: list of glob-style patterns
-                         (same behavior as shutil.copytree ignore)
-
-    Returns:
-        {
-            "only_in_dir1": [...],
-            "only_in_dir2": [...],
-            "different_files": [...]
-        }
-    """
-
-    dir1 = Path(dir1)
-    dir2 = Path(dir2)
-
-    ignore = (
-        shutil.ignore_patterns(*ignore_patterns)
-        if ignore_patterns
-        else None
+    shutil.copytree(
+        src,
+        dest,
+        symlinks=True,
+        ignore=shutil.ignore_patterns(*exclude),
     )
-
-    def collect_files(base: Path):
-        files = {}
-
-        for root, dirs, filenames in os_walk(base):
-            root_path = Path(root)
-
-            # Apply ignore function like copytree does
-            if ignore:
-                ignored = ignore(str(root_path), dirs + filenames)
-                dirs[:] = [d for d in dirs if d not in ignored]
-                filenames = [f for f in filenames if f not in ignored]
-
-            for name in filenames:
-                full_path = root_path / name
-                rel_path = full_path.relative_to(base)
-                files[rel_path] = full_path
-
-        return files
-
-    def os_walk(path):
-        return os.walk(path)
-
-    files1 = collect_files(dir1)
-    files2 = collect_files(dir2)
-
-    only_in_dir1 = sorted(set(files1) - set(files2))
-    only_in_dir2 = sorted(set(files2) - set(files1))
-
-    different_files = []
-    for common in set(files1) & set(files2):
-        if file_hash(files1[common]) != file_hash(files2[common]):
-            different_files.append(common)
-
-    return {
-        "only_in_dir1": [str(p) for p in only_in_dir1],
-        "only_in_dir2": [str(p) for p in only_in_dir2],
-        "different_files": [str(p) for p in sorted(different_files)],
-    }
 
 
 def files_differ(path1: Path, path2: Path, chunk_size: int = 8192) -> bool:
@@ -97,14 +33,11 @@ def files_differ(path1: Path, path2: Path, chunk_size: int = 8192) -> bool:
                 return False
 
 
-def directories_differ(dir1: str, dir2: str, ignore_patterns=None) -> bool:
+def directories_differ(dir1: Path, dir2: Path, ignore_patterns=None) -> bool:
     """
     Return True if directories differ, False if identical.
     Stops at first detected difference.
     """
-
-    dir1 = Path(dir1)
-    dir2 = Path(dir2)
 
     ignore = (
         shutil.ignore_patterns(*ignore_patterns)
@@ -162,3 +95,29 @@ def directories_differ(dir1: str, dir2: str, ignore_patterns=None) -> bool:
             return True
 
     return False
+
+
+def remove_excluded(root_path: Path, excluded: list[str]):
+    """
+    Removes files and directories under root_path that match
+    any of the glob patterns in `excluded`.
+    """
+    # Create the ignore callable (same style as copytree)
+    # determine_to_remove is a function which takes a path to a directory
+    # and file name sand returns all the files in that list which need to be removed
+    determine_to_remove = shutil.ignore_patterns(*excluded)
+
+    # Walk bottom-up so directories can be removed safely
+    for current_root, dirs, files in os.walk(root_path, topdown=False):
+        current_root_path = Path(current_root)
+
+        # Get names that should be removed
+        names = dirs + files
+        to_remove = determine_to_remove(current_root, names)
+
+        for name in to_remove:
+            path = current_root_path / name
+            if path.is_dir():
+                shutil.rmtree(path)
+            elif path.exists():
+                path.unlink()

@@ -2,3 +2,19 @@
 executable_name = "din"
 # dumb_project_dir is the path that the project is copied to
 command = "python $dumb_project_dir/dumb_installer.py"
+# these files are excluded when installing locally or through a remote repo
+# these files are also ignored when determining if an update needs to occur.
+# so if you exclude the dumb_build.toml in this and then change the build rules and run din update-all it won't update.
+excluded = [
+  ".gitignore",
+  "LICENSE",
+  "README.md",
+  "__pycache__",
+  "test_script.sh",
+  "*.pyc",
+  ".ruff_cache",
+]
+# only filtered out when using dumbinstaller to install a file using a local project
+local_install_excluded = [".git"]
+# only filtered out when using dumbisntaller to install a file using a remote repo
+remote_install_excluded = [""]

@@ -1,65 +1,23 @@
 import os
-import sys
 import shutil
 import stat
-import tomllib
+from debug_utils import error
 from pathlib import Path
 import argparse
-from file_utils import directories_differ
+from build_config_utils import BuildConfig
+from file_utils import directories_differ, copy_project, remove_excluded
+from git_wrapper import GitWrapper
+from constants import SHABANG, METADATA_FILE, DEFAULT_INSTALL_ROOT
+from constants import DEFAULT_BIN_DIR, CONFIG_FILE, GIT_CLONE_DIR
+from meta_data import MetaData
+
 # TODO: allow user to override install locations, maybe  do a separate user_space vs system install
 # using ~/.local/bin and I don't kkow what for the opt mayble local state?
-DEFAULT_INSTALL_ROOT = Path("/opt/dumb_builds")
-DEFAULT_BIN_DIR = Path("/usr/local/bin")
-CONFIG_FILE = "dumb_build.toml"
-SHABANG = "#!/usr/bin/env sh"
-METADATA_FILE = ".dumb_install_metadata"
-
-
-def error(msg: str) -> None:
-    print(f"dumb_builder error: {msg}", file=sys.stderr)
-    sys.exit(1)
 
 
 def require_root() -> None:
     if os.geteuid() != 0:
         error("must be run as root")
-
-
-def load_config(project_root: Path) -> dict:
-    config_path = project_root / CONFIG_FILE
-    if not config_path.exists():
-        error(f"{CONFIG_FILE} not found in current directory")
-
-    try:
-        with config_path.open("rb") as f:
-            data = tomllib.load(f)
-    except Exception as e:
-        error(f"failed to parse {CONFIG_FILE}: {e}")
-
-    if "build" not in data:
-        error("missing [build] section in dumb_build.toml")
-
-    build = data["build"]
-
-    if "executable_name" not in build:
-        error("missing 'executable_name' in [build]")
-
-    if "command" not in build:
-        error("missing 'command' in [build]")
-
-    return build
-
-
-def copy_project(src: Path, dest: Path, exclude) -> None:
-    if dest.exists():
-        shutil.rmtree(dest)
-
-    shutil.copytree(
-        src,
-        dest,
-        symlinks=True,
-        ignore=shutil.ignore_patterns(*exclude),
-    )
 
 
 def write_wrapper(executable_name: str, command: str, project_dir: Path, bin_dir: Path):
@@ -82,26 +40,29 @@ def write_wrapper(executable_name: str, command: str, project_dir: Path, bin_dir
 
 
 def delete_from_path(p: Path):
-    if p.is_file() or p.is_symlink():
+    if not p.exists():
+        return
+    elif p.is_file() or p.is_symlink():
         p.unlink()
     elif p.is_dir():
         shutil.rmtree(p)
 
 
+def filter_out_git_affecting_patterns(patterns: list[str]):
+    out = []
+    for p in patterns:
+        if ".git/" in p:
+            continue
+        if p == ".git":
+            continue
+
+        out.append(p)
+
+    return out
+
+
 def is_empty_dir(p: Path):
     return p.exists() and p.is_dir() and not any(p.iterdir())
-
-
-def save_metadata(install_dir: Path, source_dir: Path) -> None:
-    metadata_path = install_dir / METADATA_FILE
-    metadata_path.write_text(str(source_dir))
-
-
-def load_metadata(install_dir: Path) -> Path | None:
-    metadata_path = install_dir / METADATA_FILE
-    if not metadata_path.exists():
-        return None
-    return Path(metadata_path.read_text())
 
 
 def update_executable(executable_name: str) -> None:
@@ -111,7 +72,31 @@ def update_executable(executable_name: str) -> None:
         print(f"Failed: couldn't find source directory at {install_dir}")
         return
 
-    source_dir = load_metadata(install_dir)
+    meta_data = MetaData().update_from(install_dir)
+    is_git = meta_data.is_git_install
+
+    if is_git:
+        git_wrapper = GitWrapper()
+        result = git_wrapper.updateRepoAtPath(install_dir)
+        if not result.success:
+            if "already up to date" in result.failureMessage:
+                print("already up to date")
+            else:
+                print(f"Failed to update: {result.failureMessage}")
+        else:
+            # incase something was added or deleted from the excluded section's
+
+            build = BuildConfig.safe_get_build_config(install_dir)
+
+            if build:
+                remove_excluded(install_dir, build.get_remote_excluded_files())
+            else:
+                print("no build file found during update")
+
+            print("updated")
+        return
+
+    source_dir = meta_data.source_path
     if source_dir is None:
         print("No source directory path")
         return
@@ -124,26 +109,18 @@ def update_executable(executable_name: str) -> None:
         print(f"Failed: couldn't find source directory at {source_dir}")
         return
 
-    build = load_config(source_dir)
+    build = BuildConfig(source_dir)
 
-    if "exclude" in build.keys():
-        exclude = build["exclude"]
-    else:
-        exclude = [
-            "__pycache__",
-            "*.pyc",
-            ".git",
-            "dumb_build.toml",
-            "LICENSE",
-            "README.md",
-        ]
+    exclude = build.get_local_excluded_files()
+    # add the metadata file for the directoires_differ cal
     exclude.append(METADATA_FILE)
-
     if not directories_differ(install_dir, source_dir, exclude):
         print("already up to date")
         return
+
     copy_project(source_dir, install_dir, exclude)
-    save_metadata(install_dir, source_dir)
+    data = MetaData(is_git_install=is_git, source_path=source_dir)
+    data.write(install_dir)
     print("updated")
 
 
@@ -154,6 +131,10 @@ def update_all() -> None:
     for entry in DEFAULT_INSTALL_ROOT.iterdir():
         if entry.is_dir():
             update_executable(entry.name)
+
+
+def is_required_by_git(pattern):
+    pass
 
 
 def main() -> None:
@@ -176,6 +157,12 @@ def main() -> None:
     parser.add_argument(
         "--update-all", action="store_true", help="Update all installed executables"
     )
+    parser.add_argument(
+        "url",
+        nargs="?",
+        default=None,
+        help="Git repository URL to install from",
+    )
 
     require_root()
 
@@ -185,6 +172,9 @@ def main() -> None:
         bin_path = DEFAULT_BIN_DIR / args.exe_uninstall
         dumb_path = DEFAULT_INSTALL_ROOT / args.exe_uninstall
 
+        if not bin_path.exists() and not dumb_path.exists():
+            print("program not found terminating.")
+            exit(1)
         if bin_path.exists():
             print("deleting", bin_path)
             delete_from_path(bin_path)
@@ -206,24 +196,41 @@ def main() -> None:
         update_all()
         exit()
 
-    project_root = Path.cwd().resolve()
-    build = load_config(project_root)
+    is_git_install = args.url
+    if is_git_install:
+        git_wrapper = GitWrapper()
+        if not git_wrapper.is_git_installed():
+            error("Git is not installed or not available in PATH")
 
-    executable_name = build["executable_name"]
-    command = build["command"]
+        GIT_CLONE_DIR.mkdir(parents=True, exist_ok=True)
+        temp_clone_path = GIT_CLONE_DIR / f"temp_clone_{os.getpid()}"
+        clone_result = git_wrapper.cloneTo(args.url, str(temp_clone_path))
+        if not clone_result.success:
+            print(f"Failed to clone repository: {clone_result.failureMessage}")
+            delete_from_path(temp_clone_path)
+            exit(1)
+
+        project_root = temp_clone_path.resolve()
+
+        try:
+            build = BuildConfig(project_root)
+        except SystemExit:
+            print("Failed to install: could not load config from cloned repository")
+            delete_from_path(temp_clone_path)
+            exit(1)
+    else:
+        project_root = Path.cwd().resolve()
+        build = BuildConfig(project_root)
+
+    executable_name = build.executable_name
+    command = build.command
     if args.name:
         executable_name = args.name
-    if "exclude" in build.keys():
-        exclude = build["exclude"]
+
+    if is_git_install:
+        exclude = build.get_remote_excluded_files()
     else:
-        exclude = [
-            "__pycache__",
-            "*.pyc",
-            ".git",
-            "dumb_build.toml",
-            "LICENSE",
-            "README.md",
-        ]
+        exclude = build.get_local_excluded_files()
 
     DEFAULT_INSTALL_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -231,7 +238,8 @@ def main() -> None:
     install_dir = DEFAULT_INSTALL_ROOT / executable_name
 
     copy_project(project_root, install_dir, exclude)
-    save_metadata(install_dir, project_root)
+    MetaData(is_git_install=is_git_install,
+             source_path=project_root).write(install_dir)
     write_wrapper(executable_name, command, install_dir, bin_dir)
 
     print(f"Installed '{executable_name}' system-wide")
