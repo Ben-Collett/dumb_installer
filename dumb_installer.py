@@ -20,6 +20,17 @@ def require_root() -> None:
         error("must be run as root")
 
 
+def create_initial_config(executable_name: str, command: str) -> None:
+    config_content = f'''[build]
+executable_name = "{executable_name}"
+command = "{command}"
+excluded = [".gitignore"]
+local_install_excluded = [".git"]
+remote_install_excluded = []
+'''
+    Path("dumb_build.toml").write_text(config_content)
+
+
 def write_wrapper(executable_name: str, command: str, project_dir: Path, bin_dir: Path):
     bin_dir.mkdir(parents=True, exist_ok=True)
 
@@ -157,6 +168,8 @@ def main() -> None:
     parser.add_argument(
         "--update-all", action="store_true", help="Update all installed executables"
     )
+    parser.add_argument("--init", nargs=2, metavar=("EXECUTABLE_NAME", "COMMAND"),
+                       help="Create a minimal dumb_build.toml in current directory")
     parser.add_argument(
         "url",
         nargs="?",
@@ -164,9 +177,18 @@ def main() -> None:
         help="Git repository URL to install from",
     )
 
-    require_root()
-
     args = parser.parse_args()
+
+    if args.init:
+        executable_name, command = args.init
+        config_path = Path("dumb_build.toml")
+        if config_path.exists():
+            error(f"{CONFIG_FILE} already exists in current directory")
+        create_initial_config(executable_name, command)
+        print(f"Created dumb_build.toml with executable_name='{executable_name}'")
+        exit()
+
+    require_root()
 
     if args.exe_uninstall:
         bin_path = DEFAULT_BIN_DIR / args.exe_uninstall
