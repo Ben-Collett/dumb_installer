@@ -31,6 +31,20 @@ remote_install_excluded = []
     Path("dumb_build.toml").write_text(config_content)
 
 
+def create_initial_config_with_exclusions(
+    executable_name: str, command: str, excluded: list[str]
+) -> None:
+    excluded_str = ", ".join(f'"{e}"' for e in excluded)
+    config_content = f'''[build]
+executable_name = "{executable_name}"
+command = "{command}"
+excluded = [{excluded_str}]
+local_install_excluded = [".git"]
+remote_install_excluded = []
+'''
+    Path("dumb_build.toml").write_text(config_content)
+
+
 def write_wrapper(executable_name: str, command: str, project_dir: Path, bin_dir: Path):
     bin_dir.mkdir(parents=True, exist_ok=True)
 
@@ -170,6 +184,10 @@ def main() -> None:
     )
     parser.add_argument("--init", nargs=2, metavar=("EXECUTABLE_NAME", "COMMAND"),
                        help="Create a minimal dumb_build.toml in current directory")
+    parser.add_argument("--inite", nargs=2, metavar=("COMMAND_NAME", "FILE"),
+                        help="Create dumb_build.toml with command pointing to executable file")
+    parser.add_argument("--initp", nargs=2, metavar=("COMMAND_NAME", "PYTHON_FILE"),
+                        help="Create dumb_build.toml for Python project")
     parser.add_argument(
         "url",
         nargs="?",
@@ -186,6 +204,45 @@ def main() -> None:
             error(f"{CONFIG_FILE} already exists in current directory")
         create_initial_config(executable_name, command)
         print(f"Created dumb_build.toml with executable_name='{executable_name}'")
+        exit()
+
+    if args.inite:
+        command_name, file_path = args.inite
+        config_path = Path("dumb_build.toml")
+        if config_path.exists():
+            error(f"{CONFIG_FILE} already exists in current directory")
+        file = Path(file_path)
+        if not file.exists():
+            error(f"file '{file_path}' does not exist")
+        command = f"$dumb_project_dir/{file_path}"
+        create_initial_config(command_name, command)
+        if not os.access(file, os.X_OK):
+            file.chmod(
+                stat.S_IRUSR
+                | stat.S_IWUSR
+                | stat.S_IXUSR
+                | stat.S_IRGRP
+                | stat.S_IXGRP
+                | stat.S_IROTH
+                | stat.S_IXOTH
+            )
+            print(f"Created dumb_build.toml and made '{file_path}' executable")
+        else:
+            print(f"Created dumb_build.toml with executable_name='{command_name}'")
+        exit()
+
+    if args.initp:
+        command_name, python_file = args.initp
+        config_path = Path("dumb_build.toml")
+        if config_path.exists():
+            error(f"{CONFIG_FILE} already exists in current directory")
+        file = Path(python_file)
+        if not file.exists():
+            error(f"python file '{python_file}' does not exist")
+        command = f"python $dumb_project_dir/{python_file}"
+        excluded = [".gitignore", "__pycache__", "*.pyc", ".ruff_cache"]
+        create_initial_config_with_exclusions(command_name, command, excluded)
+        print(f"Created dumb_build.toml for Python project '{command_name}'")
         exit()
 
     require_root()
