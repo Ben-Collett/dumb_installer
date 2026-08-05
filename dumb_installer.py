@@ -1,14 +1,15 @@
 import os
 import shutil
 import stat
+from config import Config
 from debug_utils import error
 from pathlib import Path
 import argparse
 from build_config_utils import BuildConfig
 from file_utils import directories_differ, copy_project, remove_excluded
 from git_wrapper import GitWrapper
-from constants import SHABANG, METADATA_FILE, DEFAULT_INSTALL_ROOT
-from constants import DEFAULT_BIN_DIR, CONFIG_FILE, GIT_CLONE_DIR
+from constants import SHABANG, METADATA_FILE
+from constants import CONFIG_FILE, GIT_CLONE_DIR
 from meta_data import MetaData
 
 # TODO: allow user to override install locations, maybe  do a separate user_space vs system install
@@ -90,9 +91,9 @@ def is_empty_dir(p: Path):
     return p.exists() and p.is_dir() and not any(p.iterdir())
 
 
-def update_executable(executable_name: str) -> None:
+def update_executable(config: Config, executable_name: str) -> None:
     print(f"Updating {executable_name}...")
-    install_dir = DEFAULT_INSTALL_ROOT / executable_name
+    install_dir = config.install_path(executable_name)
     if not install_dir.exists():
         print(f"Failed: couldn't find source directory at {install_dir}")
         return
@@ -104,7 +105,7 @@ def update_executable(executable_name: str) -> None:
         git_wrapper = GitWrapper()
         result = git_wrapper.updateRepoAtPath(install_dir)
         if not result.success:
-            if "already up to date" in result.failureMessage:
+            if result.failureMessage and "already up to date" in result.failureMessage:
                 print("already up to date")
             else:
                 print(f"Failed to update: {result.failureMessage}")
@@ -149,20 +150,47 @@ def update_executable(executable_name: str) -> None:
     print("updated")
 
 
-def update_all() -> None:
-    if not DEFAULT_INSTALL_ROOT.exists():
+def projects(project_dir: Path):
+    if not project_dir.exists():
         return
 
-    for entry in DEFAULT_INSTALL_ROOT.iterdir():
-        if entry.is_dir():
-            update_executable(entry.name)
+    for project in project_dir.iterdir():
+        if project.is_dir():
+            yield project
+
+
+def update_all(config: Config) -> None:
+    for project in projects(config.project_install_dir):
+        update_executable(config, project.name)
 
 
 def is_required_by_git(pattern):
     pass
 
 
+def uninstall(user_config: Config, name):
+
+    bin_path = user_config.binary_dir / name
+    dumb_path = user_config.project_install_dir / name
+
+    if not bin_path.exists() and not dumb_path.exists():
+        print("program not found terminating.")
+        exit(1)
+    if bin_path.exists():
+        print("deleting", bin_path)
+        delete_from_path(bin_path)
+    if dumb_path.exists():
+        print("deleting", dumb_path)
+        delete_from_path(dumb_path)
+
+    install_path = user_config.project_install_dir
+    if is_empty_dir(install_path):
+        delete_from_path(install_path)
+        print(f"no programs left in {install_path}, deleting")
+
+
 def main() -> None:
+    user_config = Config()
 
     parser = argparse.ArgumentParser(
         prog="dumb installer",
@@ -171,7 +199,8 @@ def main() -> None:
 
     # TODO add support for these options:
     # parser.add_argument("-u", "--user_install", action='store_true')
-    # parser.add_argument("-U", "--uninstall", action='store_true')
+    parser.add_argument("-C", "--init-global-config", action='store_true',
+                        help="creates a dumb installer config for the current user if sudo /etc/dumb_installer/config.toml if a regular user then the config direction dumb_installer/config.toml")
 
     parser.add_argument("-E", "--exe-uninstall", type=str)
     parser.add_argument(
@@ -183,7 +212,7 @@ def main() -> None:
         "--update-all", action="store_true", help="Update all installed executables"
     )
     parser.add_argument("--init", nargs=2, metavar=("EXECUTABLE_NAME", "COMMAND"),
-                       help="Create a minimal dumb_build.toml in current directory")
+                        help="Create a minimal dumb_build.toml in current directory")
     parser.add_argument("--inite", nargs=2, metavar=("COMMAND_NAME", "FILE"),
                         help="Create dumb_build.toml with command pointing to executable file")
     parser.add_argument("--initp", nargs=2, metavar=("COMMAND_NAME", "PYTHON_FILE"),
@@ -197,13 +226,23 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    if args.init_global_config:
+        created, path = user_config.create_initial_config()
+        if created:
+            print("created config at", path)
+        else:
+            print("user config already existed at", path)
+        exit()
+
     if args.init:
         executable_name, command = args.init
         config_path = Path("dumb_build.toml")
         if config_path.exists():
             error(f"{CONFIG_FILE} already exists in current directory")
+            exit()
         create_initial_config(executable_name, command)
-        print(f"Created dumb_build.toml with executable_name='{executable_name}'")
+        print(f"Created dumb_build.toml with executable_name='{
+              executable_name}'")
         exit()
 
     if args.inite:
@@ -228,7 +267,8 @@ def main() -> None:
             )
             print(f"Created dumb_build.toml and made '{file_path}' executable")
         else:
-            print(f"Created dumb_build.toml with executable_name='{command_name}'")
+            print(f"Created dumb_build.toml with executable_name='{
+                  command_name}'")
         exit()
 
     if args.initp:
@@ -248,31 +288,15 @@ def main() -> None:
     require_root()
 
     if args.exe_uninstall:
-        bin_path = DEFAULT_BIN_DIR / args.exe_uninstall
-        dumb_path = DEFAULT_INSTALL_ROOT / args.exe_uninstall
-
-        if not bin_path.exists() and not dumb_path.exists():
-            print("program not found terminating.")
-            exit(1)
-        if bin_path.exists():
-            print("deleting", bin_path)
-            delete_from_path(bin_path)
-        if dumb_path.exists():
-            print("deleting", dumb_path)
-            delete_from_path(dumb_path)
-
-        if is_empty_dir(DEFAULT_INSTALL_ROOT):
-            delete_from_path(DEFAULT_INSTALL_ROOT)
-            print(f"no programs left in {DEFAULT_INSTALL_ROOT}, deleting")
-
+        uninstall(user_config, args.exe_uninstall)
         exit()
 
     if args.update:
-        update_executable(args.update)
+        update_executable(user_config, args.update)
         exit()
 
     if args.update_all:
-        update_all()
+        update_all(user_config)
         exit()
 
     is_git_install = args.url
@@ -311,10 +335,10 @@ def main() -> None:
     else:
         exclude = build.get_local_excluded_files()
 
-    DEFAULT_INSTALL_ROOT.mkdir(parents=True, exist_ok=True)
+    user_config.project_install_dir.mkdir(parents=True, exist_ok=True)
 
-    bin_dir = DEFAULT_BIN_DIR
-    install_dir = DEFAULT_INSTALL_ROOT / executable_name
+    bin_dir = user_config.binary_dir
+    install_dir = user_config.project_install_dir / executable_name
 
     copy_project(project_root, install_dir, exclude)
     MetaData(is_git_install=is_git_install,
@@ -323,7 +347,7 @@ def main() -> None:
 
     print(f"Installed '{executable_name}' system-wide")
     print(f"Project location: {install_dir}")
-    print(f"Executable: {DEFAULT_BIN_DIR / executable_name}")
+    print(f"Executable: {user_config.binary_dir / executable_name}")
 
 
 if __name__ == "__main__":
