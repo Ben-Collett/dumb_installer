@@ -1,8 +1,13 @@
 from pathlib import Path
 
 from load_config_map import parse
-from constants import DEFAULT_BIN_DIR, DEFAULT_INSTALL_ROOT, PROJECT_NAME
+from constants import DEFAULT_BIN_DIR_ROOT, DEFAULT_BIN_DIR_USER, DEFAULT_INSTALL_DIR_USER, DEFAULT_INSTALL_DIR_ROOT, PROJECT_NAME
 from config_manager import ConfigManager
+import os
+
+
+def is_root() -> bool:
+    return bool(os.getenv("SUDO_UID"))
 
 
 def config_path() -> Path:
@@ -13,6 +18,20 @@ def config_path() -> Path:
 _PATHS = "paths"
 _BIN_DIR = "bin_dir"
 _INSTALL_DIR = "project_install_dir"
+
+
+def default_bin_dir():
+    if is_root():
+        return DEFAULT_BIN_DIR_ROOT
+    else:
+        return DEFAULT_BIN_DIR_USER
+
+
+def default_install_dir():
+    if is_root():
+        return DEFAULT_INSTALL_DIR_ROOT
+    else:
+        return DEFAULT_INSTALL_DIR_USER
 
 
 class Config:
@@ -28,13 +47,13 @@ class Config:
         if binary_dir_str:
             self.binary_dir: Path = Path(binary_dir_str)
         else:
-            self.binary_dir: Path = DEFAULT_BIN_DIR
+            self.binary_dir: Path = default_bin_dir()
 
         project_install_dir_str = paths.get(_INSTALL_DIR)
         if project_install_dir_str:
             self.project_install_dir: Path = Path(project_install_dir_str)
         else:
-            self.project_install_dir: Path = DEFAULT_INSTALL_ROOT
+            self.project_install_dir: Path = default_install_dir()
 
     def create_initial_config(self) -> tuple[bool, Path | None]:
         """

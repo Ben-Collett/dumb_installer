@@ -1,6 +1,8 @@
 from pathlib import Path
-DEFAULT_INSTALL_ROOT = Path("/opt/dumb_builds")
-DEFAULT_BIN_DIR = Path("/usr/local/bin")
+DEFAULT_INSTALL_DIR_ROOT = Path("/usr/lib/dumb_builds")
+DEFAULT_BIN_DIR_ROOT = Path("/usr/local/bin")
+DEFAULT_BIN_DIR_USER = Path("~/.local/bin").expanduser()
+DEFAULT_INSTALL_DIR_USER = Path("~/.local/lib/dumb_builds").expanduser()
 PROJECT_NAME = "dumb_installer"
 CONFIG_FILE = "dumb_build.toml"
 SHABANG = "#!/usr/bin/env sh"

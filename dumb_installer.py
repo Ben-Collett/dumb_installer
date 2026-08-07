@@ -1,7 +1,7 @@
 import os
 import shutil
 import stat
-from config import Config
+from config import Config, is_root
 from debug_utils import error
 from pathlib import Path
 import argparse
@@ -14,11 +14,6 @@ from meta_data import MetaData
 
 # TODO: allow user to override install locations, maybe  do a separate user_space vs system install
 # using ~/.local/bin and I don't kkow what for the opt mayble local state?
-
-
-def require_root() -> None:
-    if os.geteuid() != 0:
-        error("must be run as root")
 
 
 def create_initial_config(executable_name: str, command: str) -> None:
@@ -164,10 +159,6 @@ def update_all(config: Config) -> None:
         update_executable(config, project.name)
 
 
-def is_required_by_git(pattern):
-    pass
-
-
 def uninstall(user_config: Config, name):
 
     bin_path = user_config.binary_dir / name
@@ -194,7 +185,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(
         prog="dumb installer",
-        description="easy way to install programs system wide on linux, from scripts. Without having to deal with package managers",
+        description="easy way to install programs system-wide or per user on linux, from scripts. Without having to deal with package managers",
     )
 
     # TODO add support for these options:
@@ -285,8 +276,6 @@ def main() -> None:
         print(f"Created dumb_build.toml for Python project '{command_name}'")
         exit()
 
-    require_root()
-
     if args.exe_uninstall:
         uninstall(user_config, args.exe_uninstall)
         exit()
@@ -345,7 +334,11 @@ def main() -> None:
              source_path=project_root).write(install_dir)
     write_wrapper(executable_name, command, install_dir, bin_dir)
 
-    print(f"Installed '{executable_name}' system-wide")
+    if is_root():
+        print(f"Installed '{executable_name}' system-wide")
+    else:
+        print(f"Installed '{executable_name}' for user")
+
     print(f"Project location: {install_dir}")
     print(f"Executable: {user_config.binary_dir / executable_name}")
 
