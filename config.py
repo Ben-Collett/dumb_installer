@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from auth import AuthModes
 from load_config_map import parse
 from constants import DEFAULT_BIN_DIR_ROOT, DEFAULT_BIN_DIR_USER, DEFAULT_INSTALL_DIR_USER, DEFAULT_INSTALL_DIR_ROOT, PROJECT_NAME
 from config_manager import ConfigManager
@@ -54,6 +55,10 @@ class Config:
             self.project_install_dir: Path = Path(project_install_dir_str)
         else:
             self.project_install_dir: Path = default_install_dir()
+        self.on_update_mode: AuthModes = AuthModes.from_str(
+            config.get("on_update_auth"))
+        self.on_install_mode: AuthModes = AuthModes.from_str(
+            config.get("on_install_auth"))
 
     def create_initial_config(self) -> tuple[bool, Path | None]:
         """

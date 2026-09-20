@@ -1,50 +1,39 @@
-from debug_utils import error
 from pathlib import Path
 from constants import CONFIG_FILE
-from typing import Self
 from collection_utils import merge_collections_to_set
 import tomllib
 
-
-def _get_excluded(config: dict) -> list[str]:
-    if "excluded" in config:
-        return config["excluded"]
-    return []
-
-
-def _get_remote_excluded(config: dict) -> list[str]:
-    if "remote_install_excluded" in config:
-        return config["remote_install_excluded"]
-    return []
-
-
-def _get_local_exclude(config: dict) -> list[str]:
-    if "local_install_excluded" in config:
-        return config["local_install_excluded"]
-    return []
+from merged_error import MergedError
 
 
 def _load_config(project_root: Path) -> dict:
+    # just to suppress the warning that data might be unbound after the try, except
+    data = {}
     config_path = project_root / CONFIG_FILE
-    if not config_path.exists():
-        error(f"{CONFIG_FILE} not found in current directory")
+
+    error = MergedError()
+    error.add_error_if(not config_path.exists(), f"{
+                       CONFIG_FILE} not found in current directory")
+
+    error.print_and_exit_if_erred()
 
     try:
         with config_path.open("rb") as f:
             data = tomllib.load(f)
     except Exception as e:
-        error(f"failed to parse {CONFIG_FILE}: {e}")
+        error.add_error(f"failed to parse {CONFIG_FILE}: {e}")
+        error.print_and_exit_if_erred()
 
-    if "build" not in data:
-        error("missing [build] section in dumb_build.toml")
+    error.add_error_if("build" not in data,
+                       "missing [build] section in dumb_build.toml")
+
+    error.print_and_exit_if_erred()
 
     build = data["build"]
 
-    if "executable_name" not in build:
-        error("missing 'executable_name' in [build]")
-
-    if "command" not in build:
-        error("missing 'command' in [build]")
+    error.on_missing_toml_field("executable_name", "build", build)
+    error.on_missing_toml_field("command", "build", build)
+    error.print_and_exit_if_erred()
 
     return build
 
@@ -53,14 +42,21 @@ class BuildConfig:
 
     def __init__(self, path: Path):
         config = _load_config(path)
-        self._excluded = _get_excluded(config)
-        self._remote_excluded = _get_remote_excluded(config)
-        self._local_excluded = _get_local_exclude(config)
-        self.executable_name = config["executable_name"]
-        self.command = config["command"]
+        self._excluded: list[str] = config.get("excluded", [])
+        self._remote_excluded: list[str] = config.get(
+            "remote_install_excluded", [])
+        self._local_excluded: list[str] = config.get(
+            "local_install_excluded", [])
+
+        self.on_install: str | None = config.get("on_install")
+        self.on_update: str | None = config.get("on_update")
+        if "executable_name" not in config:
+            raise Exception("required property executable name missing")
+        self.executable_name: str = config["executable_name"]
+        self.command: str = config["command"]
 
     @staticmethod
-    def safe_get_build_config(path: Path) -> Self | None:
+    def safe_get_build_config(path: Path) -> "BuildConfig | None":
         try:
             config = BuildConfig(path)
             return config

@@ -6,7 +6,7 @@ from typing import Self
 
 # meta data is stored as a json file at project_root/METADATA_FILE
 class MetaData:
-    def __init__(self, is_git_install: bool = False, source_path: Path = None):
+    def __init__(self, is_git_install: bool = False, source_path: Path | None = None):
         self.is_git_install = is_git_install
         if is_git_install:
             self.source_path = None

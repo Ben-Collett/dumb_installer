@@ -23,6 +23,25 @@ class GitWrapper:
     def is_git_installed(self) -> bool:
         return shutil.which("git") is not None
 
+    def check_can_do_git(self, path: Path):
+        if not self.is_git_installed():
+            return GitResult(
+                success=False,
+                failureMessage="Git is not installed or not available in PATH.",
+            )
+
+        if not path.exists():
+            return GitResult(
+                success=False,
+                failureMessage="Specified path does not exist.",
+            )
+
+        if not (path / ".git").exists():
+            return GitResult(
+                success=False,
+                failureMessage="Specified path is not a git repository.",
+            )
+
     def cloneTo(self, url: str, path: str) -> GitResult:
         if not self.is_git_installed():
             return GitResult(
@@ -48,25 +67,26 @@ class GitWrapper:
 
         return self._handle_git_error(result)
 
+    def full_stash(self, path: Path):
+        assert self.check_can_do_git(path) is not None
+        self.check_can_do_git(path)
+        self._run_git(["stash", "push", "-u", "-m",
+                      '"dumb_snapshot"'], cwd=str(path))
+
+    def pop_stash(self, path: Path):
+        assert self.check_can_do_git(path) is not None
+        self._run_git(["reset", "--hard", "HEAD"])
+        self._run_git(["clean", "-fd"])
+        self._run_git(["stash", "pop"])
+
+    def clear_stash(self, path: Path):
+        assert self.check_can_do_git(path) is not None
+        self._run_git(["stash", "clear"])
+
     def updateRepoAtPath(self, path: Path) -> GitResult:
-
-        if not self.is_git_installed():
-            return GitResult(
-                success=False,
-                failureMessage="Git is not installed or not available in PATH.",
-            )
-
-        if not path.exists():
-            return GitResult(
-                success=False,
-                failureMessage="Specified path does not exist.",
-            )
-
-        if not (path / ".git").exists():
-            return GitResult(
-                success=False,
-                failureMessage="Specified path is not a git repository.",
-            )
+        res = self.check_can_do_git(path)
+        if res is not None:
+            return res
 
         branch_proc = self._run_git(
             ["rev-parse", "--abbrev-ref", "HEAD"],

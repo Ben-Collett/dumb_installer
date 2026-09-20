@@ -1,4 +1,8 @@
 [build]
+# command to run preinstall, usually used to build the project, runs inside the project install dir
+# on_install = ""
+# command to run on each update usually builds the project, runs inside the project install dir
+#  on_update = ""
 executable_name = "din"
 # dumb_project_dir is the path that the project is copied to
 command = "python $dumb_project_dir/dumb_installer.py"
