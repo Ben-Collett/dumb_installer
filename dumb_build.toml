@@ -9,6 +9,8 @@ command = "python $dumb_project_dir/dumb_installer.py"
 # these files are excluded when installing locally or through a remote repo
 # these files are also ignored when determining if an update needs to occur.
 # so if you exclude the dumb_build.toml in this and then change the build rules and run din update-all it won't update.
+# this execlusion happens BEFORE on_install/on_update thus any build artifacts may be excluded
+# if there are any build artifacts you want removed in post you will need to write a script that does that and put it at the end of on_install/on_update
 excluded = [
   ".gitignore",
   "LICENSE",

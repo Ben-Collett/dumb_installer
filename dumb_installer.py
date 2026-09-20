@@ -7,6 +7,12 @@ from debug_utils import error
 from pathlib import Path
 import argparse
 from build_config_utils import BuildConfig
+from build_initializer import (
+    init_project_config,
+    init_project_config_with_executable,
+    init_project_config_python,
+    init_project_config_rust,
+)
 from file_utils import directories_differ, copy_project, remove_excluded
 from git_wrapper import GitWrapper
 from constants import SHABANG, METADATA_FILE
@@ -17,31 +23,6 @@ from meta_data import MetaData
 from process_wrapper import ProcessWrapper
 from snapshot import Snapshot
 from user_prompt import UserPrompt
-
-
-def create_initial_config(executable_name: str, command: str) -> None:
-    config_content = f'''[build]
-executable_name = "{executable_name}"
-command = "{command}"
-excluded = [".gitignore"]
-local_install_excluded = [".git"]
-remote_install_excluded = []
-'''
-    Path("dumb_build.toml").write_text(config_content)
-
-
-def create_initial_config_with_exclusions(
-    executable_name: str, command: str, excluded: list[str]
-) -> None:
-    excluded_str = ", ".join(f'"{e}"' for e in excluded)
-    config_content = f'''[build]
-executable_name = "{executable_name}"
-command = "{command}"
-excluded = [{excluded_str}]
-local_install_excluded = [".git"]
-remote_install_excluded = []
-'''
-    Path("dumb_build.toml").write_text(config_content)
 
 
 def write_wrapper(executable_name: str, command: str, project_dir: Path, bin_dir: Path):
@@ -267,6 +248,8 @@ def _make_parser() -> argparse.ArgumentParser:
                         help="Create dumb_build.toml with command pointing to executable file")
     parser.add_argument("--initp", nargs=2, metavar=("COMMAND_NAME", "PYTHON_FILE"),
                         help="Create dumb_build.toml for Python project")
+    parser.add_argument("--initr", action="store_true",
+                        help="Create dumb_build.toml for Rust project")
     parser.add_argument(
         "url",
         nargs="?",
@@ -282,55 +265,6 @@ def _create_initial_config(user_config: Config):
         print_info("created config at", path)
     else:
         print_warning("user config already existed at", path)
-
-
-def init_project_config(path, command):
-    config_path = Path("dumb_build.toml")
-    if config_path.exists():
-        error(f"{CONFIG_FILE} already exists in current directory")
-    create_initial_config(path, command)
-    print_info(f"Created dumb_build.toml with command='{
-        command}'")
-
-
-def init_project_config_with_executable(command_name, file_path):
-
-    config_path = Path("dumb_build.toml")
-    if config_path.exists():
-        error(f"{CONFIG_FILE} already exists in current directory")
-    file = Path(file_path)
-    if not file.exists():
-        error(f"file '{file_path}' does not exist")
-    command = f"$dumb_project_dir/{file_path}"
-    create_initial_config(command_name, command)
-    if not os.access(file, os.X_OK):
-        file.chmod(
-            stat.S_IRUSR
-            | stat.S_IWUSR
-            | stat.S_IXUSR
-            | stat.S_IRGRP
-            | stat.S_IXGRP
-            | stat.S_IROTH
-            | stat.S_IXOTH
-        )
-        print_info(f"Created dumb_build.toml and made '{
-                   file_path}' executable")
-    else:
-        print_info(f"Created dumb_build.toml with executable_name='{
-            command_name}'")
-
-
-def init_project_config_python(command_name, python_file):
-    config_path = Path("dumb_build.toml")
-    if config_path.exists():
-        error(f"{CONFIG_FILE} already exists in current directory")
-    file = Path(python_file)
-    if not file.exists():
-        error(f"python file '{python_file}' does not exist")
-    command = f"python $dumb_project_dir/{python_file}"
-    excluded = [".gitignore", "__pycache__", "*.pyc", ".ruff_cache"]
-    create_initial_config_with_exclusions(command_name, command, excluded)
-    print_info(f"Created dumb_build.toml for Python project '{command_name}'")
 
 
 def main() -> None:
@@ -358,6 +292,10 @@ def main() -> None:
     if args.initp:
         command_name, python_file = args.initp
         init_project_config_python(command_name, python_file)
+        exit()
+
+    if args.initr:
+        init_project_config_rust()
         exit()
 
     if args.exe_uninstall:
