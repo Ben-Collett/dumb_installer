@@ -1,7 +1,7 @@
-import shutil
-import subprocess
+from subprocess import CompletedProcess
 from dataclasses import dataclass
 from pathlib import Path
+from process_wrapper import ProcessWrapper
 from typing import Optional
 
 
@@ -13,15 +13,16 @@ class GitResult:
 
 
 class GitWrapper:
-    def __init__(self, default_domain: str = "github.com"):
+    def __init__(self, default_domain: str = "github.com", process_wrapper=ProcessWrapper()):
         self.default_domain = default_domain
+        self.process_wrapper = process_wrapper
 
     # -------------------------
     # Public API
     # -------------------------
 
     def is_git_installed(self) -> bool:
-        return shutil.which("git") is not None
+        return self.process_wrapper.has_command("git")
 
     def check_can_do_git(self, path: Path):
         if not self.is_git_installed():
@@ -42,7 +43,7 @@ class GitWrapper:
                 failureMessage="Specified path is not a git repository.",
             )
 
-    def cloneTo(self, url: str, path: str) -> GitResult:
+    def cloneTo(self, url: str, path: str, commit: str | None = None) -> GitResult:
         if not self.is_git_installed():
             return GitResult(
                 success=False,
@@ -59,8 +60,16 @@ class GitWrapper:
             )
 
         # Shallow clone
-        result = self._run_git(
-            ["clone", "--depth", "1", resolved_url, str(path_obj)])
+        if commit is None:
+            result = self._run_git(
+                ["clone", "--depth", "1", resolved_url, str(path_obj)])
+        else:
+            result = self._run_git(
+                ["clone",  resolved_url, str(path_obj)])
+            if result.returncode != 0:
+                return self._handle_git_error(result)
+
+            result = self._run_git(["checkout", commit], cwd=path_obj)
 
         if result.returncode == 0:
             return GitResult(success=True)
@@ -68,19 +77,27 @@ class GitWrapper:
         return self._handle_git_error(result)
 
     def full_stash(self, path: Path):
-        assert self.check_can_do_git(path) is not None
+        res = self.check_can_do_git(path)
+        if res is not None:
+            raise Exception(res.failureMessage)
+
         self.check_can_do_git(path)
         self._run_git(["stash", "push", "-u", "-m",
-                      '"dumb_snapshot"'], cwd=str(path))
+                      '"dumb_snapshot"'], cwd=path)
 
     def pop_stash(self, path: Path):
-        assert self.check_can_do_git(path) is not None
-        self._run_git(["reset", "--hard", "HEAD"])
-        self._run_git(["clean", "-fd"])
-        self._run_git(["stash", "pop"])
+        res = self.check_can_do_git(path)
+        if res is not None:
+            raise Exception(res.failureMessage)
+        self._run_git(["reset", "--hard", "HEAD"], cwd=path)
+        self._run_git(["clean", "-fd"], cwd=path)
+        self._run_git(["stash", "pop"], cwd=path)
 
     def clear_stash(self, path: Path):
-        assert self.check_can_do_git(path) is not None
+        res = self.check_can_do_git(path)
+        if res is not None:
+            raise Exception(res.failureMessage)
+
         self._run_git(["stash", "clear"])
 
     def updateRepoAtPath(self, path: Path) -> GitResult:
@@ -145,9 +162,10 @@ class GitWrapper:
         if clean_proc.returncode != 0:
             return self._handle_git_error(clean_proc)
 
+        # TODO: work out if there is a faster option then this it takes absolute ages to run.
         gc_proc = self._run_git(
-            ["gc", "--prune=now", "--aggressive"],
-            cwd=str(path),
+            ["gc", "--prune=now"],
+            cwd=path,
         )
 
         if gc_proc.returncode != 0:
@@ -162,15 +180,13 @@ class GitWrapper:
             return f"https://{self.default_domain}/{url}"
         return f"https://{self.default_domain}/{url}"
 
-    def _run_git(self, args, cwd: Optional[str] = None):
-        return subprocess.run(
-            ["git"] + args,
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-        )
+    def _run_git(self, args, cwd: Optional[str | Path] = None) -> CompletedProcess[str]:
+        if cwd is None:
+            return self.process_wrapper.run_subprocess(["git"]+args)
+        else:
+            return self.process_wrapper.run_subprocess_in_dir(['git']+args, dir_override=Path(cwd))
 
-    def _handle_git_error(self, process: subprocess.CompletedProcess) -> GitResult:
+    def _handle_git_error(self, process: CompletedProcess) -> GitResult:
         real_message = (process.stderr or process.stdout or "").strip()
 
         # Custom failure mappings

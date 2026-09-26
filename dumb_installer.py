@@ -132,15 +132,18 @@ def update_executable(config: Config, executable_name: str) -> None:
 
             if build is not None:
 
+                remove_excluded(install_dir, build.get_remote_excluded_files())
                 hook_result = safe_run_on_update_hook(
                     config, build, ProcessWrapper(install_dir))
+
                 if not hook_result.success():
                     print_error(f"update failed for {
                         build.executable_name} reverting...")
                     git_wrapper.pop_stash(install_dir)
                     print_info(hook_result.get_message())
                     return
-                remove_excluded(install_dir, build.get_remote_excluded_files())
+
+                meta_data.write(install_dir)
             else:
                 print_warning("no build file found during update")
 
@@ -256,6 +259,13 @@ def _make_parser() -> argparse.ArgumentParser:
         default=None,
         help="Git repository URL to install from",
     )
+
+    parser.add_argument(
+        "commit",
+        nargs="?",
+        default=None,
+        help="the commit for the url",
+    )
     return parser
 
 
@@ -318,7 +328,8 @@ def main() -> None:
 
         GIT_CLONE_DIR.mkdir(parents=True, exist_ok=True)
         temp_clone_path = GIT_CLONE_DIR / f"temp_clone_{os.getpid()}"
-        clone_result = git_wrapper.cloneTo(args.url, str(temp_clone_path))
+        clone_result = git_wrapper.cloneTo(
+            args.url, str(temp_clone_path), args.commit)
 
         if not clone_result.success:
             print_error(f"Failed to clone repository: {
