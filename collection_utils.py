@@ -11,10 +11,8 @@ def safe_remove(elements: list, element):
 
 
 def remove_where(elements: list, cond):
-    to_remove_indexes = []
-    for i, val in enumerate(elements):
-        if cond(val):
-            to_remove_indexes.append(i)
-
-    for i in to_remove_indexes:
-        elements.pop(i)
+    # Walk backwards: popping by ascending index would shift every later
+    # element down and either skip entries or run off the end.
+    for i in range(len(elements) - 1, -1, -1):
+        if cond(elements[i]):
+            elements.pop(i)

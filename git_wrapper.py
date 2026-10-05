@@ -98,7 +98,7 @@ class GitWrapper:
         if res is not None:
             raise Exception(res.failureMessage)
 
-        self._run_git(["stash", "clear"])
+        self._run_git(["stash", "clear"], cwd=path)
 
     def updateRepoAtPath(self, path: Path) -> GitResult:
         res = self.check_can_do_git(path)
@@ -174,10 +174,13 @@ class GitWrapper:
         return GitResult(success=True)
 
     def _resolve_url(self, url: str) -> str:
-        if url.startswith(("http://", "https://", "git://", "ssh://")):
+        """Pass through anything with an explicit scheme git understands.
+
+        Anything else is treated as a github-style shorthand (``user/repo``)
+        and expanded against the default domain.
+        """
+        if url.startswith(("http://", "https://", "git://", "ssh://", "file://")):
             return url
-        if "/" in url:
-            return f"https://{self.default_domain}/{url}"
         return f"https://{self.default_domain}/{url}"
 
     def _run_git(self, args, cwd: Optional[str | Path] = None) -> CompletedProcess[str]:

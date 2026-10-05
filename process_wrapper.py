@@ -13,7 +13,7 @@ class ProcessWrapper:
         if dir is None:
             dir = self.dir
         assert dir is not None, "run in dir called with no dir set"
-        return self.run(f"cd {self.dir}; {command}")
+        return self.run(f"cd {dir}; {command}")
 
     def run(self, command) -> int:
         return os.system(command)

@@ -1,3 +1,6 @@
+import sys
+
+
 class MergedError:
     def __init__(self):
         self.errors: list[str] = []
@@ -19,7 +22,7 @@ class MergedError:
     def print_and_exit_if_erred(self, exit_code=1):
         if self.has_erred():
             self.print_messages()
-            exit(exit_code)
+            sys.exit(exit_code)
 
     def print_messages(self):
         for error in self.errors:

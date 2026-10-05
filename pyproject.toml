@@ -1,0 +1,17 @@
+[project]
+name = "dumb-installer"
+version = "0.1.0"
+description = "Install scripts and small tools system-wide or per user, without a package manager"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --strict-markers"
+filterwarnings = [
+    "ignore::DeprecationWarning:pytest_asyncio.plugin",
+]
+markers = [
+    "sandbox: requires the bwrap sandbox (skipped automatically if bwrap is absent)",
+    "network: requires real network access; not run by default",
+]

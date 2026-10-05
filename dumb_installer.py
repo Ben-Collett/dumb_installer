@@ -1,5 +1,6 @@
 import os
 import shutil
+import sys
 import stat
 from auth import AuthModes
 from config import Config, is_root
@@ -70,19 +71,21 @@ def is_empty_dir(p: Path):
     return p.exists() and p.is_dir() and not any(p.iterdir())
 
 
-def authenticate_can_run_hook(auth_mode: AuthModes, hook_name, executable_name, user_prompt=UserPrompt()):
+def authenticate_can_run_hook(auth_mode: AuthModes, hook_name, executable_name, user_prompt: UserPrompt | None = None):
     if auth_mode == AuthModes.AUTO_REJECT:
         return False
     if auth_mode == AuthModes.AUTO_APPROVE:
         return True
+    if user_prompt is None:
+        user_prompt = UserPrompt()
     return user_prompt.yes_or_no_prompt(f"allow program {executable_name} to run {hook_name} hook")
 
 
-def authenticate_can_run_on_update(config: Config, executable_name: str, user_prompt=UserPrompt()):
+def authenticate_can_run_on_update(config: Config, executable_name: str, user_prompt: UserPrompt | None = None):
     return authenticate_can_run_hook(config.on_update_mode, "on_update", executable_name, user_prompt)
 
 
-def authenticate_can_run_on_install(config: Config, executable_name: str, user_prompt=UserPrompt()):
+def authenticate_can_run_on_install(config: Config, executable_name: str, user_prompt: UserPrompt | None = None):
     return authenticate_can_run_hook(config.on_install_mode, "on_install", executable_name, user_prompt)
 
 
@@ -97,7 +100,7 @@ def safe_run_on_update_hook(config: Config, build_config: BuildConfig, process_w
 
 
 def safe_run_on_install_hook(config: Config, build_config: BuildConfig, process_wrapper: ProcessWrapper) -> HookResult:
-    if build_config.on_update is not None:
+    if build_config.on_install is not None:
         if not authenticate_can_run_on_install(config, build_config.executable_name):
             return HookFailure("install failed, couldn't run on_install hook, removing... ")
         if process_wrapper.run_in_dir(build_config.on_install) != 0:
@@ -105,14 +108,20 @@ def safe_run_on_install_hook(config: Config, build_config: BuildConfig, process_
     return HookSuccess()
 
 
-def update_executable(config: Config, executable_name: str) -> None:
+def update_executable(config: Config, executable_name: str) -> bool:
+    """Update one installed program. Returns False if anything went wrong, so
+    the caller can surface a non-zero exit code."""
     print_info(f"Updating {executable_name}...")
     install_dir = config.install_path(executable_name)
     if not install_dir.exists():
         print_error(f"Failed: couldn't find source directory at {install_dir}")
-        return
+        return False
 
-    meta_data = MetaData().update_from(install_dir)
+    try:
+        meta_data = MetaData().update_from(install_dir)
+    except (FileNotFoundError, ValueError) as e:
+        print_error(f"Failed: {install_dir} is not a dumb_installer install ({e})")
+        return False
     is_git = meta_data.is_git_install
 
     if is_git:
@@ -125,6 +134,8 @@ def update_executable(config: Config, executable_name: str) -> None:
                 print_info("already up to date")
             else:
                 print_error(f"Failed to update: {result.failureMessage}")
+                git_wrapper.clear_stash(install_dir)
+                return False
         else:
             # incase something was added or deleted from the excluded section's
 
@@ -141,7 +152,8 @@ def update_executable(config: Config, executable_name: str) -> None:
                         build.executable_name} reverting...")
                     git_wrapper.pop_stash(install_dir)
                     print_info(hook_result.get_message())
-                    return
+                    git_wrapper.clear_stash(install_dir)
+                    return False
 
                 meta_data.write(install_dir)
             else:
@@ -149,20 +161,20 @@ def update_executable(config: Config, executable_name: str) -> None:
 
             print_info("updated")
         git_wrapper.clear_stash(install_dir)
-        return
+        return True
 
     source_dir = meta_data.source_path
     if source_dir is None:
         print_error("No source directory path")
-        return
+        return False
 
     if not source_dir.exists():
         print_error(f"Failed: couldn't find source directory at {source_dir}")
-        return
+        return False
 
     if not (source_dir / CONFIG_FILE).exists():
         print_error(f"Failed: couldn't find source directory at {source_dir}")
-        return
+        return False
 
     build = BuildConfig(source_dir)
 
@@ -171,7 +183,7 @@ def update_executable(config: Config, executable_name: str) -> None:
     exclude.append(METADATA_FILE)
     if not directories_differ(install_dir, source_dir, exclude):
         print_info("already up to date")
-        return
+        return True
 
     snap_shot = Snapshot(install_dir)
     copy_project(source_dir, install_dir, exclude)
@@ -181,12 +193,13 @@ def update_executable(config: Config, executable_name: str) -> None:
         snap_shot.revert_and_discard()
         print_error("update failed because:")
         print_error(res.get_message())
-        return
+        return False
 
     snap_shot.discard()
     data = MetaData(is_git_install=is_git, source_path=source_dir)
     data.write(install_dir)
     print_info("updated")
+    return True
 
 
 def projects(project_dir: Path):
@@ -198,9 +211,17 @@ def projects(project_dir: Path):
             yield project
 
 
-def update_all(config: Config) -> None:
+def update_all(config: Config) -> bool:
+    """Update every installed program.
+
+    A failure in one project must not stop the others, but the overall result
+    is still a failure so callers notice.
+    """
+    all_ok = True
     for project in projects(config.project_install_dir):
-        update_executable(config, project.name)
+        if not update_executable(config, project.name):
+            all_ok = False
+    return all_ok
 
 
 def uninstall(user_config: Config, name):
@@ -210,7 +231,7 @@ def uninstall(user_config: Config, name):
 
     if not bin_path.exists() and not dumb_path.exists():
         print_info("program not found terminating.")
-        exit(1)
+        sys.exit(1)
     if bin_path.exists():
         print_info("deleting", bin_path)
         delete_from_path(bin_path)
@@ -284,43 +305,47 @@ def main() -> None:
 
     if args.init_global_config:
         _create_initial_config(user_config)
-        exit()
+        sys.exit()
 
     if args.init:
-        command, path = user_config.create_initial_config()
+        executable_name, command = args.init
 
         # init project config can also exit if the file already exist.
         # or there is an io error
-        init_project_config(command, path)
-        exit()
+        init_project_config(executable_name, command)
+        sys.exit()
 
     if args.inite:
         command_name, file_path = args.inite
         init_project_config_with_executable(command_name, file_path)
-        exit()
+        sys.exit()
 
     if args.initp:
         command_name, python_file = args.initp
         init_project_config_python(command_name, python_file)
-        exit()
+        sys.exit()
 
     if args.initr:
         init_project_config_rust()
-        exit()
+        sys.exit()
 
     if args.exe_uninstall:
         uninstall(user_config, args.exe_uninstall)
-        exit()
+        sys.exit()
 
     if args.update:
-        update_executable(user_config, args.update)
-        exit()
+        if not update_executable(user_config, args.update):
+            sys.exit(1)
+        sys.exit()
 
     if args.update_all:
-        update_all(user_config)
-        exit()
+        if not update_all(user_config):
+            sys.exit(1)
+        sys.exit()
 
-    is_git_install = args.url
+    # A bool, not the raw url string: this is persisted to the metadata file
+    # and reloaded by update, so it must not become null or a url.
+    is_git_install = bool(args.url)
     if is_git_install:
         git_wrapper = GitWrapper()
         if not git_wrapper.is_git_installed():
@@ -335,7 +360,7 @@ def main() -> None:
             print_error(f"Failed to clone repository: {
                         clone_result.failureMessage}")
             delete_from_path(temp_clone_path)
-            exit(1)
+            sys.exit(1)
 
         project_root = temp_clone_path.resolve()
 
@@ -345,7 +370,7 @@ def main() -> None:
             print_error(
                 "Failed to install: could not load config from cloned repository")
             delete_from_path(temp_clone_path)
-            exit(1)
+            sys.exit(1)
     else:
         project_root = Path.cwd().resolve()
         build = BuildConfig(project_root)
@@ -379,7 +404,7 @@ def main() -> None:
         print_info("on install hook failed")
         shutil.rmtree(install_dir)
         print_info(res.get_message())
-        exit(1)
+        sys.exit(1)
 
     write_wrapper(executable_name, command, install_dir, bin_dir)
 

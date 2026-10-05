@@ -73,7 +73,3 @@ class BuildConfig:
         merged_set = merge_collections_to_set(
             self._excluded, self._remote_excluded)
         return list(merged_set)
-
-
-def safe_get_build_config(path) -> BuildConfig | None:
-    pass

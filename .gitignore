@@ -1,3 +1,5 @@
 __pycache__/
 .ruff_cache/
 test_script.sh
+.pytest_cache/
+.coverage

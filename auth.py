@@ -10,6 +10,6 @@ class AuthModes(Enum):
     def from_str(mode: str | None) -> "AuthModes":
         if mode == "auto reject":
             return AuthModes.AUTO_REJECT
-        elif mode == "auto reject":
+        elif mode == "auto approve":
             return AuthModes.AUTO_APPROVE
         return AuthModes.MANUAL
