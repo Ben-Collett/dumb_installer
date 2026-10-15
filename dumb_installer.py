@@ -1,5 +1,4 @@
 import os
-import shutil
 import sys
 import stat
 from auth import AuthModes
@@ -7,6 +6,7 @@ from config import Config, is_root
 from debug_utils import error
 from pathlib import Path
 import argparse
+from env_path import add_path, remove_path
 from build_config_utils import BuildConfig
 from build_initializer import (
     init_project_config,
@@ -14,26 +14,69 @@ from build_initializer import (
     init_project_config_python,
     init_project_config_rust,
 )
-from file_utils import directories_differ, copy_project, remove_excluded
+from file_utils import directories_differ, copy_project, remove_excluded, rmtree
 from git_wrapper import GitWrapper
 from constants import SHABANG, METADATA_FILE
 from constants import CONFIG_FILE, GIT_CLONE_DIR
 from hook_failure_types import HookFailure, HookResult,  HookSuccess
 from log_utils import print_error, print_info, print_warning
 from meta_data import MetaData
+from platform_utils import is_windows, wrapper_filename
 from process_wrapper import ProcessWrapper
 from snapshot import Snapshot
 from user_prompt import UserPrompt
 
 
+def _quote_command_for_cmd(command: str) -> str:
+    """cmd.exe form of a command: %dumb_project_dir% in place of the var.
+
+    Paths under C:\\Users\\ frequently contain spaces, and cmd.exe splits on
+    them without any quoting of its own, so the project path is quoted. A
+    command that already quotes something (e.g. `sh "C:/bin/tool"`) is left
+    alone rather than double-quoted.
+    """
+    cmd = command.replace("$dumb_project_dir", '"%dumb_project_dir%"')
+    if '"' in command:
+        return cmd.replace('"%dumb_project_dir%"', "%dumb_project_dir%")
+    return cmd
+
+
+def wrapper_string(project_dir: Path, command: str):
+    if is_windows():
+        # cmd.exe has no shebang and no "$@", so the wrapper is a batch file:
+        # set the dir as a var (quoted so spaces in the path survive), forward
+        # args with %*, and hand back the child's exit code via exit /b.
+        # $dumb_project_dir is rewritten to %dumb_project_dir% because cmd.exe
+        # does not expand $ variables.
+        return (
+            '@echo off\r\n'
+            'setlocal\r\n'
+            f'set "dumb_project_dir={project_dir}"\r\n'
+            # %* forwards args verbatim, but a command that is already
+            # quoted breaks: "prog" "a b" is fine, while an unquoted command
+            # plus %* gives a stray closing quote. Quote only when the
+            # command does not already quote its own path.
+            f'{_quote_command_for_cmd(command)} %*\r\n'
+            'exit /b %ERRORLEVEL%\r\n'
+        )
+    else:
+        return f'{SHABANG}\ndumb_project_dir={project_dir}\n{command} "$@"'
+
+
 def write_wrapper(executable_name: str, command: str, project_dir: Path, bin_dir: Path):
     bin_dir.mkdir(parents=True, exist_ok=True)
 
-    wrapper_path = bin_dir / executable_name
+    wrapper_path = bin_dir / wrapper_filename(executable_name)
 
-    script = f'{SHABANG}\ndumb_project_dir={project_dir}\n{command} "$@"'
+    # $dumb_project_dir is the *project* dir, not the dir the wrapper lives in:
+    # the command reaches the project files through it.
+    script = wrapper_string(project_dir, command)
 
-    wrapper_path.write_text(script)
+    # newline="" keeps the newlines the script already carries. Without it
+    # write_text translates every "\n" to os.linesep on windows, and since the
+    # batch wrapper already spells its own line breaks "\r\n", every line would
+    # be written "\r\r\n".
+    wrapper_path.write_text(script, encoding="utf-8", newline="")
     wrapper_path.chmod(
         stat.S_IRUSR
         | stat.S_IWUSR
@@ -51,7 +94,7 @@ def delete_from_path(p: Path):
     elif p.is_file() or p.is_symlink():
         p.unlink()
     elif p.is_dir():
-        shutil.rmtree(p)
+        rmtree(p)
 
 
 def filter_out_git_affecting_patterns(patterns: list[str]):
@@ -120,7 +163,8 @@ def update_executable(config: Config, executable_name: str) -> bool:
     try:
         meta_data = MetaData().update_from(install_dir)
     except (FileNotFoundError, ValueError) as e:
-        print_error(f"Failed: {install_dir} is not a dumb_installer install ({e})")
+        print_error(
+            f"Failed: {install_dir} is not a dumb_installer install ({e})")
         return False
     is_git = meta_data.is_git_install
 
@@ -226,12 +270,13 @@ def update_all(config: Config) -> bool:
 
 def uninstall(user_config: Config, name):
 
-    bin_path = user_config.binary_dir / name
+    bin_path = user_config.binary_dir / wrapper_filename(name)
     dumb_path = user_config.project_install_dir / name
 
     if not bin_path.exists() and not dumb_path.exists():
         print_info("program not found terminating.")
         sys.exit(1)
+
     if bin_path.exists():
         print_info("deleting", bin_path)
         delete_from_path(bin_path)
@@ -243,6 +288,36 @@ def uninstall(user_config: Config, name):
     if is_empty_dir(install_path):
         delete_from_path(install_path)
         print_info(f"no programs left in {install_path}, deleting")
+
+
+def edit_env_path(user_config: Config, present: bool) -> None:
+    """
+    Add or remove the bin directory from the user's PATH.
+
+    Windows only: there the user's PATH is a registry value, which is what
+    env_path writes. Elsewhere there is nothing to write, so say so plainly
+    rather than pretending it worked.
+    """
+    action = "adding" if present else "removing"
+    target = user_config.binary_dir
+
+    if not is_windows():
+        print_error(
+            f"Failed while {action} {target} in PATH: the user's PATH is "
+            f"a registry value, so this only works on windows")
+        sys.exit(1)
+
+    try:
+        if present:
+            add_path(target)
+        else:
+            remove_path(target)
+    except OSError as e:
+        print_error(f"Failed to edit PATH: {e}")
+        sys.exit(1)
+
+    print_info(f"{action.capitalize()} {target} {
+               'to' if present else 'from'} PATH")
 
 
 def _make_parser() -> argparse.ArgumentParser:
@@ -274,6 +349,10 @@ def _make_parser() -> argparse.ArgumentParser:
                         help="Create dumb_build.toml for Python project")
     parser.add_argument("--initr", action="store_true",
                         help="Create dumb_build.toml for Rust project")
+    parser.add_argument("--add-to-path", action="store_true",
+                        help="Add the config's bin directory to the user's PATH (windows only)")
+    parser.add_argument("--remove-from-path", action="store_true",
+                        help="Remove the config's bin directory from the user's PATH (windows only)")
     parser.add_argument(
         "url",
         nargs="?",
@@ -327,6 +406,14 @@ def main() -> None:
 
     if args.initr:
         init_project_config_rust()
+        sys.exit()
+
+    if args.add_to_path:
+        edit_env_path(user_config, present=True)
+        sys.exit()
+
+    if args.remove_from_path:
+        edit_env_path(user_config, present=False)
         sys.exit()
 
     if args.exe_uninstall:
@@ -396,13 +483,13 @@ def main() -> None:
              source_path=project_root).write(install_dir)
 
     if is_git_install:
-        shutil.rmtree(project_root)
+        rmtree(project_root)
 
     res = safe_run_on_install_hook(
         user_config, build, ProcessWrapper(install_dir))
     if not res.success():
         print_info("on install hook failed")
-        shutil.rmtree(install_dir)
+        rmtree(install_dir)
         print_info(res.get_message())
         sys.exit(1)
 
@@ -414,7 +501,7 @@ def main() -> None:
         print_info(f"Installed '{executable_name}' for user")
 
     print_info(f"Project location: {install_dir}")
-    print_info(f"Executable: {user_config.binary_dir / executable_name}")
+    print_info(f"Executable: {bin_dir / wrapper_filename(executable_name)}")
 
 
 if __name__ == "__main__":

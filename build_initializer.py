@@ -3,8 +3,9 @@ import stat
 import tomllib
 from constants import CONFIG_FILE
 from debug_utils import error
-from log_utils import print_info
+from log_utils import print_info, print_warning
 from pathlib import Path
+from platform_utils import is_windows
 
 
 def create_initial_config(executable_name: str, command: str) -> None:
@@ -65,7 +66,20 @@ def init_project_config_with_executable(command_name, file_path):
     file = Path(file_path)
     if not file.exists():
         error(f"file '{file_path}' does not exist")
+
     command = f"$dumb_project_dir/{file_path}"
+
+    # There is no execute bit on windows, so chmod does nothing and
+    # os.access(X_OK) reports success for any existing file
+    # so windows just early returns without changing permissions
+    if is_windows():
+        create_initial_config(command_name, command)
+        print_warning(
+            f"Created dumb_build.toml with executable_name='{command_name}'. "
+            f"On windows, ensure '{file_path}' can be run by your shell "
+            f"(e.g. add a file association, or use --initp for .py files)")
+        return
+
     create_initial_config(command_name, command)
     if not os.access(file, os.X_OK):
         file.chmod(

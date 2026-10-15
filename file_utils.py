@@ -1,18 +1,84 @@
 from pathlib import Path
 import shutil
 import os
+import stat
+import sys
+
+from platform_utils import is_windows
+
+
+# shutil.rmtree gained onexc in 3.12; onerror is the 3.11 spelling and takes
+# sys.exc_info() instead of the exception itself.
+_RMTREE_ERROR_KWARG = "onexc" if sys.version_info >= (3, 12) else "onerror"
+
+
+def _clear_readonly(path: str) -> None:
+    """Drop the read-only bit so windows will let the file be deleted.
+
+    Keeps the existing mode rather than setting a bare S_IWRITE, so a file
+    that was executable stays executable.
+    """
+    try:
+        mode = os.stat(path).st_mode
+    except OSError:
+        mode = 0
+
+    os.chmod(path, mode | stat.S_IWRITE)
+
+
+def _unlock_and_retry(func, path, exc):
+    """rmtree error handler: make the entry writable, then retry the op."""
+    try:
+        _clear_readonly(path)
+    except OSError:
+        # Could not unlock it, so surface the original failure rather than a
+        # confusing chmod error. onerror hands over sys.exc_info().
+        raise exc[1] if isinstance(exc, tuple) else exc
+
+    func(path)
+
+
+def rmtree(path: Path) -> None:
+    """shutil.rmtree that can also delete git's read-only pack files.
+
+    git marks the pack files it writes into .git/objects/pack read-only.
+    posix ignores mode bits when unlinking, so this never mattered there, but
+    windows enforces the attribute and unlink fails with ERROR_ACCESS_DENIED
+    (WinError 5). Any git install deletes such a tree, so without this every
+    `din user/repo` install dies during cleanup.
+    """
+    shutil.rmtree(path, **{_RMTREE_ERROR_KWARG: _unlock_and_retry})
+
+
+def copy_tree(src: Path, dest: Path, ignore=None, dirs_exist_ok: bool = False) -> None:
+    """copytree with symlinks=True, falling back to copying link contents.
+
+    Preserving symlinks needs SeCreateSymbolicLinkPrivilege on windows, so an
+    unprivileged (or non-Developer-Mode) install of any project containing a
+    symlink would fail outright. Where that happens the symlinks are
+    dereferenced instead: the files still arrive, just duplicated rather than
+    linked. On posix symlinks are recreated exactly as before.
+    """
+    try:
+        shutil.copytree(src, dest, symlinks=True, ignore=ignore,
+                        dirs_exist_ok=dirs_exist_ok)
+        return
+    except (OSError, NotImplementedError):
+        if not is_windows():
+            raise
+
+    # removes partial write from the try catch on windows, usaly because of the symlinks requiring privileges
+    if dest.exists():
+        rmtree(dest)
+
+    shutil.copytree(src, dest, symlinks=False, ignore=ignore)
 
 
 def copy_project(src: Path, dest: Path, exclude) -> None:
     if dest.exists():
-        shutil.rmtree(dest)
+        rmtree(dest)
 
-    shutil.copytree(
-        src,
-        dest,
-        symlinks=True,
-        ignore=shutil.ignore_patterns(*exclude),
-    )
+    copy_tree(src, dest, ignore=shutil.ignore_patterns(*exclude))
 
 
 def files_differ(path1: Path, path2: Path, chunk_size: int = 8192) -> bool:
@@ -118,6 +184,6 @@ def remove_excluded(root_path: Path, excluded: list[str]):
         for name in to_remove:
             path = current_root_path / name
             if path.is_dir():
-                shutil.rmtree(path)
+                rmtree(path)
             elif path.exists():
                 path.unlink()

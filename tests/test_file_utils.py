@@ -6,14 +6,23 @@ paths, because that is what survives a refactor.
 
 import json
 import os
+import stat
 from pathlib import Path
 
 import pytest
 
 from build_config_utils import BuildConfig
 from constants import CONFIG_FILE, METADATA_FILE
-from file_utils import copy_project, directories_differ, files_differ, remove_excluded
+from file_utils import (
+    _clear_readonly,
+    copy_project,
+    directories_differ,
+    files_differ,
+    remove_excluded,
+    rmtree,
+)
 from meta_data import MetaData
+from platform_utils import is_windows
 from snapshot import Snapshot
 from conftest import write_project
 
@@ -215,6 +224,70 @@ def test_remove_excluded_on_clean_tree_is_a_noop(tmp_path):
     (root / "main.py").write_text("keep")
     remove_excluded(root, ["*.pyc", ".git"])
     assert (root / "main.py").is_file()
+
+
+# ---------------------------------------------------------------------------
+# rmtree
+# ---------------------------------------------------------------------------
+
+
+def _make_read_only(p: Path) -> None:
+    p.chmod(p.stat().st_mode & ~0o222)
+
+
+@pytest.mark.skipif(not is_windows(), reason="windows enforces the read-only attribute")
+def test_rmtree_deletes_read_only_files(tmp_path):
+    # git writes .git/objects/pack/*.pack|.idx read-only, and every git
+    # install deletes a clone containing them.
+    tree = tmp_path / "clone"
+    pack = tree / ".git" / "objects" / "pack"
+    pack.mkdir(parents=True)
+    (pack / "pack-abc.idx").write_text("idx")
+    (pack / "pack-abc.pack").write_text("pack")
+    _make_read_only(pack / "pack-abc.idx")
+    _make_read_only(pack / "pack-abc.pack")
+
+    rmtree(tree)
+
+    assert not tree.exists()
+
+
+@pytest.mark.skipif(not is_windows(), reason="read-only mode bits do not block unlink on posix")
+def test_copy_project_replaces_a_destination_holding_read_only_files(tmp_path):
+    # The installed dir keeps .git for remote installs, so the next install or
+    # update has to delete read-only pack files from it too.
+    src = tmp_path / "src"
+    (src / ".git" / "objects" / "pack").mkdir(parents=True)
+    (src / ".git" / "objects" / "pack" / "pack-new.idx").write_text("new")
+    (src / "main.py").write_text("print('hi')\n")
+
+    dest = tmp_path / "dest"
+    (dest / ".git" / "objects" / "pack").mkdir(parents=True)
+    stale = dest / ".git" / "objects" / "pack" / "pack-old.idx"
+    stale.write_text("old")
+    _make_read_only(stale)
+
+    copy_project(src, dest, [])
+
+    assert not stale.exists()
+    assert (dest / "main.py").is_file()
+    assert (dest / ".git" / "objects" / "pack" / "pack-new.idx").is_file()
+
+
+@pytest.mark.skipif(is_windows(), reason="windows synthesizes st_mode from the read-only attribute alone")
+def test_unlocking_a_read_only_file_changes_nothing_but_the_write_bit(tmp_path):
+    # A bare S_IWRITE would collapse the mode to write-only and strip the exec
+    # bit, which these trees can carry (shell scripts in a git clone).
+    script = tmp_path / "run.sh"
+    script.write_text("#!/bin/sh\n")
+    script.chmod(0o555)
+    before = script.stat().st_mode
+
+    _clear_readonly(str(script))
+
+    after = script.stat().st_mode
+    assert after & stat.S_IWRITE
+    assert after & ~stat.S_IWRITE == before & ~stat.S_IWRITE
 
 
 # ---------------------------------------------------------------------------

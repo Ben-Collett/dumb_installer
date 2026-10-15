@@ -46,6 +46,16 @@ to uninstall a program installed through dumb_installer
 
 So to uninstall the dumb installer you run `sudo din -E din`
 
+### Editing PATH on Windows
+`--add-to-path` and `--remove-from-path` add or remove the bin directory from your config.toml (`bin_dir`, default `~/.local/bin`) in your user PATH, so installed programs can be run by name.
+
+```bash
+din --add-to-path
+din --remove-from-path
+```
+
+These are Windows only: there the user PATH is the registry value `HKCU\Environment\Path`. Elsewhere the flag exits with an error instead of quietly doing nothing.
+
 To see the options available run `din -h`
 
 ## How it works

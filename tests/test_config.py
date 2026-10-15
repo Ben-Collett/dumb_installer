@@ -219,6 +219,51 @@ def test_config_defaults_to_user_dirs_without_sudo(cfg_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Platform-aware per-user defaults
+# ---------------------------------------------------------------------------
+
+
+def test_user_dirs_are_posix_by_default(monkeypatch):
+    import config as config_module
+
+    monkeypatch.setattr(config_module, "is_windows", lambda: False)
+    assert config_module.default_user_bin_dir() == Path(
+        "~/.local/bin").expanduser()
+    assert config_module.default_user_install_dir() == Path(
+        "~/.local/lib/dumb_builds").expanduser()
+
+
+def test_user_dirs_switch_to_windows(monkeypatch):
+    import config as config_module
+    from constants import (
+        DEFAULT_BIN_DIR_USER_WINDOWS,
+        DEFAULT_INSTALL_DIR_USER_WINDOWS,
+    )
+
+    monkeypatch.setattr(config_module, "is_windows", lambda: True)
+    assert config_module.default_user_bin_dir() == DEFAULT_BIN_DIR_USER_WINDOWS
+    assert config_module.default_user_install_dir() == (
+        DEFAULT_INSTALL_DIR_USER_WINDOWS)
+
+
+def test_windows_user_dirs_ignore_sudo_state(cfg_path, monkeypatch):
+    """is_root() is always False on Windows, so the user dirs win either way."""
+    import config as config_module
+    from constants import (
+        DEFAULT_BIN_DIR_USER_WINDOWS,
+        DEFAULT_INSTALL_DIR_USER_WINDOWS,
+    )
+
+    monkeypatch.setattr(config_module, "is_windows", lambda: True)
+    # is_root() consults is_windows(), so it stays False here even with
+    # SUDO_UID set -- the user dirs are what Windows installs should get.
+    monkeypatch.setenv("SUDO_UID", "1000")
+    cfg = config_module.Config()
+    assert cfg.binary_dir == DEFAULT_BIN_DIR_USER_WINDOWS
+    assert cfg.project_install_dir == DEFAULT_INSTALL_DIR_USER_WINDOWS
+
+
+# ---------------------------------------------------------------------------
 # create_initial_config
 # ---------------------------------------------------------------------------
 
