@@ -4,7 +4,7 @@ Dumb Installer installs a project as a system-wide executable by copying it to /
 ```bash
 git clone https://github.com/Ben-Collett/dumb_installer
 cd dumb_installer/
-sudo python dumb_installer.py
+sudo python dumb_installer.py Ben-Collett/dumb_installer
 ```
 
 You should now have an executable named din in your path.
