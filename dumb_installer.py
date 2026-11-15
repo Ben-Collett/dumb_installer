@@ -60,7 +60,7 @@ def wrapper_string(project_dir: Path, command: str):
             'exit /b %ERRORLEVEL%\r\n'
         )
     else:
-        return f'{SHABANG}\ndumb_project_dir={project_dir}\n{command} "$@"'
+        return f'{SHABANG}\ndumb_project_dir={project_dir}\nexec {command} "$@"'
 
 
 def write_wrapper(executable_name: str, command: str, project_dir: Path, bin_dir: Path):
